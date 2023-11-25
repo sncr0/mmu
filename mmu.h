@@ -12,6 +12,7 @@
 //#include "pager.h"
 #include <deque>
 #include <vector>
+#include "randomizer.cpp"
 
 // Define any constants or macros
 bool do_show_output = false;
@@ -123,6 +124,14 @@ public:
 class FIFO : public pagerClass {
     public:
     FIFO(int n_f) : pagerClass("FIFO", n_f) {}
+    int hand;
+    frame_t* select_victim_frame(frame_t* frame_table) override;
+};
+
+class Random : public pagerClass {
+    public:
+    Randomizer randomizer;
+    Random(int n_f, Randomizer& _randomizer) : pagerClass("Random", n_f), randomizer(_randomizer) {}
     int hand;
     frame_t* select_victim_frame(frame_t* frame_table) override;
 };

@@ -9,7 +9,18 @@ frame_t* FIFO::select_victim_frame(frame_t* frame_table) {
     return victim;
 }
 
+frame_t* Random::select_victim_frame(frame_t* frame_table) {
+    int random_number = randomizer.myrandom(num_frames);
+    frame_t* victim = &frame_table[random_number];
+    a_output("ASELECT %d\n", victim->id);
+    return victim;
+}
+
+
 // ====================|  Diagnostic Functions  |===========================
+
+
+// Print process statistics for a single process
 void printProcessStatistics(process_object* current_process) {
     printf("PROC[%d]: U=%lu M=%lu I=%lu O=%lu FI=%lu FO=%lu Z=%lu SV=%lu SP=%lu\n",
             current_process->process_id,
@@ -24,17 +35,18 @@ void printProcessStatistics(process_object* current_process) {
             current_process->pstats.segprot);
 }
 
+
+// Print global statistics
 void printGlobalStatistics(std::map<int, process_object> processes, global_stats &gstats) {
+    
+    // Initialize cost to 0
     unsigned long long cost = 0;
 
-
+    // Calculate cost
     cost += (unsigned long long)gstats.inst_count;
     cost += (unsigned long long)gstats.ctx_switches * 130;
     cost += (unsigned long long)gstats.process_exits * 1230;
     for (auto& [id, process] : processes) {
-        /* read/write (load/store) instructions count as 1, context_switches instructions=130, process exits instructions=1230.
-        In addition if the following operations counts as follows:
-        maps=350, unmaps=410, ins=3200, outs=2750, fins=2350, fouts=2800, zeros=150, segv=440, segprot=410 */
         cost += (unsigned long long)process.pstats.maps * 350;
         cost += (unsigned long long)process.pstats.unmaps * 410;
         cost += (unsigned long long)process.pstats.ins * 3200;
@@ -46,6 +58,7 @@ void printGlobalStatistics(std::map<int, process_object> processes, global_stats
         cost += (unsigned long long)process.pstats.segprot * 410;
     }
 
+    // Print global statistics
     printf("TOTALCOST %lu %lu %lu %llu %lu\n", 
             gstats.inst_count + gstats.ctx_switches + gstats.process_exits, 
             gstats.ctx_switches, 
@@ -54,24 +67,15 @@ void printGlobalStatistics(std::map<int, process_object> processes, global_stats
             sizeof(pte_t));
 }
 
+
+// Print page table for a single process
 void printPageTable(process_object* current_process) {
+
+    // Print page table
     printf("PT[%d]:", current_process->process_id);
     for (int i = 0; i < MAX_VPAGES; ++i) {
         printf(" ");
-        /*
-        PT[0]: 0:RMS 1:RMS 2:RMS 3:R-S 4:R-S 5:RMS 6:R-S 7:R-S 8:RMS 9:R-S 10:RMS 
-        11:R-S 12:R-- 13:RM- # # 16:R-- 17:R-S # # 20:R-- # 22:R-S 23:RM- 24:RMS # # 
-        27:R-S 28:RMS # # # # # 34:R-S 35:R-S # 37:RM- 38:R-S * # 41:R-- # 43:RMS 
-        44:RMS # 46:R-S * * # * * * # 54:R-S # * * 58:RM- * * # * * 
-        R (referenced), M (modified), S (swapped out) (note we don’t show the write protection bit as it is implied/inherited 
-        from the specified VMA.
-        PTEs that are not valid are represented by a ‘#’ if they have been swapped out (note you don’t have to swap out a 
-        page if it was only referenced but not modified), or a ‘*’ if it does not have a swap area associated with. Otherwise 
-        (valid) indicates the virtual page index and RMS bits with ‘-‘ indicated that that bit is not set.
-        Note a virtual page, that was once referenced, but was not modified and then is selected by the replacement 
-        algorithm, does not have to be paged out (by definition all content must still be ZERO) and can transition to ‘*’.
-        */
-        const pte_t& page_table_entry = current_process->page_table[i];
+        pte_t& page_table_entry = current_process->page_table[i];
         if (!page_table_entry.PRESENT) {
             if (page_table_entry.PAGEDOUT) {
                 printf("#");
@@ -90,11 +94,14 @@ void printPageTable(process_object* current_process) {
     printf("\n");
 }
 
+
+// Print frame table
 void printFrameTable(frame_t* frame_table, int num_frames) {
     printf("FT:");
+
     for (int i = 0; i < num_frames; ++i) {
         printf(" ");
-        const frame_t& frame = frame_table[i];
+        frame_t& frame = frame_table[i];
         if (frame.mapped_pte == nullptr) {
             printf("*");
         }
@@ -106,12 +113,12 @@ void printFrameTable(frame_t* frame_table, int num_frames) {
 }
 
 
-
+// Print processes
 void printProcesses(std::map<int, process_object> processes) {
-    for (const auto& [id, process] : processes) {
+    for (auto& [id, process] : processes) {
         verbose("Process %d VMA:\n", id);
         for (auto it = process.VMA_list.begin(); it != process.VMA_list.end(); ++it) {
-            const auto& [start_vpage, end_vpage, write_protected, id, file_mapped] = *it;
+            auto& [start_vpage, end_vpage, write_protected, id, file_mapped] = *it;
             int index = std::distance(process.VMA_list.begin(), it);
             verbose("  VMA %d: %d %d %d %d\n", index, start_vpage, end_vpage, write_protected, file_mapped);
         }
@@ -120,8 +127,13 @@ void printProcesses(std::map<int, process_object> processes) {
 
 
 // ====================|  Input Parsing  |===========================
+
+
+// Read info-containing line from a file
 std::string readLine(std::ifstream& file) {
+
     std::string line;
+
     while (getline(file, line)){
         if (line[0] == '#') {
             continue;
@@ -132,6 +144,9 @@ std::string readLine(std::ifstream& file) {
     }
     return "";
 }
+
+
+// Parse input from file
 std::map<int, process_object> readInput(std::ifstream& file){
     std::string line;
     std::map<int, process_object> processes;
@@ -159,6 +174,7 @@ std::map<int, process_object> readInput(std::ifstream& file){
     return processes;
 }
 
+// Popule the frame table
 void populate_frame_table(int num_frames, std::deque<int> &free_list, frame_t* frame_table) {
     for (int i = 0; i < num_frames; i++) {
         free_list.push_back(i);
@@ -169,6 +185,11 @@ void populate_frame_table(int num_frames, std::deque<int> &free_list, frame_t* f
     }
 }
 
+
+// ====================|  Simulation Helper Functions  |===========================
+
+
+// Get next instruction from file
 bool get_next_instruction(char* operation, int* vpage, std::ifstream& file) {
     std::string line;
     line =  readLine(file);
@@ -182,11 +203,10 @@ bool get_next_instruction(char* operation, int* vpage, std::ifstream& file) {
     }
 }
 
-// ====================|  Simulation  |===========================
+
+// Allocate a frame from the free list
 frame_t* allocate_frame_from_free_list(std::deque<int> &free_list, frame_t* frame_table) {
-    // allocate a frame from the free list
-    // if no free frame is available, return NULL
-    // otherwise return a pointer to the frame
+
     if (free_list.empty()) {
         return nullptr;
     }
@@ -198,26 +218,15 @@ frame_t* allocate_frame_from_free_list(std::deque<int> &free_list, frame_t* fram
     }
 }
 
+
 frame_t* get_frame(pagerClass* pager, std::deque<int> &free_list, frame_t* frame_table) {
-    // TODO
+
     frame_t* frame = allocate_frame_from_free_list(free_list, frame_table);
     if (frame == nullptr) frame = pager->select_victim_frame(frame_table);
-
-    /*
-    Once a victim frame has been determined, the victim frame must
-    be unmapped from its user ( <address space:vpage>), i.e. its entry in the owning process’s page_table must be removed
-    (“UNMAP”), however you must inspect the state of the R and M bits. If the page was modified, then the page frame must be
-    paged out to the swap device (“OUT”) or in case it was file mapped it has to be written back to the file (“FOUT”). Now the
-    frame can be reused for the faulting instruction. First the PTE must be reset (note once the PAGEDOUT flag is set it will
-    never be reset as it indicates there is content on the swap device) and then the PTE’s frame must be set and the valid bit can
-    be set.
-    */
-
     if (frame->mapped_pte != nullptr){
         pte_t* old_pte = frame->mapped_pte;
         output(" UNMAP %d:%d\n", frame->mapped_process->process_id, frame->mapped_vpage);
         frame->mapped_process->pstats.unmaps++;
-        
         if (old_pte->MODIFIED){
             if (frame->mapped_process->VMA_list[frame->mapped_vma_id].file_mapped) {
                 output(" FOUT\n");
@@ -244,6 +253,7 @@ frame_t* get_frame(pagerClass* pager, std::deque<int> &free_list, frame_t* frame
     return frame;
 }
 
+// Page fault handler
 bool pagefault_handler(process_object* process,
                         int vpage, 
                         pagerClass *pager, 
@@ -251,22 +261,6 @@ bool pagefault_handler(process_object* process,
                         frame_t* frame_table,
                         global_stats &gstats){
 
-    /* OS must resolve:
-        • select a victim frame to replace
-        (make pluggable with different replacement algorithms)
-        • Unmap its current user (UNMAP)
-        • Save frame to disk if necessary (OUT / FOUT)
-        • Fill frame with proper content of current instruction’s address space (IN, FIN,ZERO)
-        • Map its new user (MAP)
-        • Its now ready for use and instruction
-    */
-
-   /*
-    In the pgfault handler you first determine that the vpage can be accessed, i.e. it is part of one of the VMAs. Maybe
-    you can find a faster way then searching each time the VMA list as long as it does not involve doing that before the
-    instruction simulation (see above, hint you have free bits in the PTE). If not, a SEGV output line must be created and you
-    move on to the next instruction.
-   */
     bool vpage_in_vma = false;
     VMA* vma_of_vpage = nullptr;
     for (auto it = process->VMA_list.begin(); it != process->VMA_list.end(); ++it) {
@@ -282,11 +276,6 @@ bool pagefault_handler(process_object* process,
         return false;
     }
 
-    /*
-    If it is part of a VMA then the page must be instantiated, i.e. a frame must be allocated,
-    assigned to the PTE belonging to the vpage of this instruction (i.e. currentproc->pagetable[vpage].frame = allocated_frame ) 
-    */
-
     frame_t* allocated_frame = get_frame(pager, free_list, frame_table);
     process->page_table[vpage].PHYSICAL_FRAME_NUMBER = allocated_frame->id;
     process->page_table[vpage].WRITE_PROTECT = vma_of_vpage->write_protected;
@@ -296,59 +285,30 @@ bool pagefault_handler(process_object* process,
     allocated_frame->mapped_vpage = vpage;
     allocated_frame->mapped_vma_id = vma_of_vpage->id;
     
-
-    
-    /*
-    and
-    then populated with the proper content. The population depends whether this page was previously paged out (in which case
-    the page must be brought back from the swap space (“IN”) or (“FIN” in case it is a memory mapped file). If the vpage was
-    never swapped out and is not file mapped, then by definition it still has a zero filled content and you issue the “ZERO” output.
-    */
     if (vma_of_vpage->file_mapped == true) {
         output(" FIN\n");
         process->pstats.fins++;
-        //process->page_table[vpage].PAGEDOUT = 0;
     }
     else if (process->page_table[vpage].PAGEDOUT) {
         output(" IN\n");
         process->pstats.ins++;
-        //process->page_table[vpage].PAGEDOUT = 0;
     }
     else {
         output(" ZERO\n");
         process->pstats.zeros++;
     }
-    // if (process->page_table[vpage].PAGEDOUT) {
-    //     // bring back from swap space
-    //     if (vma_of_vpage->file_mapped == true) {
-    //         output(" FIN\n");
-    //         process->pstats.fins++;
-    //         //process->page_table[vpage].PAGEDOUT = 0;
-    //     }
-    //     else {
-    //         output(" IN\n");
-    //         process->pstats.ins++;
-    //         //process->page_table[vpage].PAGEDOUT = 0;
-    //     }
-    // }
-    // else {
-    //     // zero filled content
-    //     output(" ZERO\n");
-    //     process->pstats.zeros++;
-    // }
-
 
     output(" MAP %d\n", allocated_frame->id);
     process->pstats.maps++;
 
-    
     return true;
-
-
-
-
 };
 
+
+// ====================|  Simulation  |===========================
+
+
+// Simulation
 void simulation(int num_frames, std::map<int, process_object> processes, std::ifstream& file, pagerClass* pager) {
     
     frame_t frame_table[num_frames];
@@ -370,12 +330,6 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
             gstats.ctx_switches++;
         }
         else if (operation == 'e') {
-            /*
-            On process exit (instruction), you have to traverse the active process’s page table starting from 0..63 and for each valid entry 
-            UNMAP the page and FOUT modified filemapped pages. Note that dirty non-fmapped (anonymous) pages are not written
-            back (OUT) as the process exits. The used frame has to be returned to the free pool and made available to the get_frame()
-            function again. The frames then should be used again in the order they were released.
-            */ //frame->mapped_pte = nullptr;
             printf("EXIT current process %d\n", current_process->process_id);
             gstats.process_exits++;
             for (int i = 0; i < MAX_VPAGES; i++) {
@@ -419,11 +373,6 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
             pte = &current_process->page_table[vpage];
             if (!pte->PRESENT) {
                 if (!pagefault_handler(current_process, vpage, pager, free_list, frame_table, gstats)){
-
-                    //std::cout << "SEGV" << std::endl;
-                    //current_process->pstats.segv++;
-                    //exit(1);
-                    //gstats.inst_count++;
                     instruction_number++;
                     continue;
                 }
@@ -458,21 +407,6 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
             std::cout << "Invalid operation" << std::endl;
             exit(1);
         }
-        // handle special case of “c” and “e” instruction
-        // now the real instructions for read and write
-        //if ( ! pte->present) {
-        // this in reality generates the page fault exception and now you execute
-        // verify this is actually a valid page in a vma if not raise error and next inst
-        //frame_t *newframe = get_frame();
-        //-> figure out if/what to do with old frame if it was mapped
-        // see general outline in MM-slides under Lab3 header and writeup below
-        // see whether and how to bring in the content of the access page.
-        //}
-        // now the page is definitely present
-        // check write protection
-        // simulate instruction execution by hardware by updating the R/M PTE bits
-        //update_pte(read/modify) bits based on operations.
-    
         instruction_number++;
     }
     if (do_show_pagetable) {
@@ -491,6 +425,8 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
     }
 }
 
+
+// ====================|  Main  |===========================
 int main(int argc, char **argv) {
     int num_frames = MAX_FRAMES;
     int c;
@@ -498,14 +434,6 @@ int main(int argc, char **argv) {
     std::string input_file = "../lab3_assign/in1";
     std::string rfile = "rfile";
 
-    /*
-     * Input format:
-     *  ./mmu –f<num_frames> -a<algo> [-o<options>] inputfile randomfile
-     */
-
-    /*
-     * Optional arguments:
-     */
     while ((c = getopt(argc,argv,"f:a:o:xyfa")) != -1 ){
         switch(c) {
             case 'f':
@@ -549,9 +477,6 @@ int main(int argc, char **argv) {
         }   
     }
 
-    /*
-     * Non-optional arguments:
-     */
     if ((argc - optind) == 2) {
         input_file = argv[optind];
         rfile = argv[optind+1];
@@ -569,12 +494,17 @@ int main(int argc, char **argv) {
     if (algo == 'f') {
         pager = new FIFO(num_frames);
     }
+    else if (algo == 'r') {
+        Randomizer randomizer(rfile);
+        pager = new Random(num_frames, randomizer);
+    }
     else {
         std::cout << "Invalid algorithm" << std::endl;
         exit(1);
     }
     std::ifstream file(input_file);
 
+    Randomizer randomizer(rfile);
 
 
     std::map<int, process_object> processes = readInput(file);
