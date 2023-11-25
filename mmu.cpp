@@ -16,6 +16,22 @@ frame_t* Random::select_victim_frame(frame_t* frame_table) {
     return victim;
 }
 
+frame_t* Clock::select_victim_frame(frame_t* frame_table) {
+    frame_t* victim = nullptr;
+    while (victim == nullptr) {
+        frame_t* frame = &frame_table[hand];
+        if (frame->mapped_pte->REFERENCED == 0) {
+            victim = frame;
+        }
+        else {
+            frame->mapped_pte->REFERENCED = 0;
+        }
+        hand = (hand + 1) % num_frames;
+    }
+    a_output("ASELECT %d\n", victim->id);
+    return victim;
+}
+
 
 // ====================|  Diagnostic Functions  |===========================
 
@@ -497,6 +513,9 @@ int main(int argc, char **argv) {
     else if (algo == 'r') {
         Randomizer randomizer(rfile);
         pager = new Random(num_frames, randomizer);
+    }
+    else if (algo == 'c') {
+        pager = new Clock(num_frames);
     }
     else {
         std::cout << "Invalid algorithm" << std::endl;

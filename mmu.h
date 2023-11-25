@@ -136,4 +136,11 @@ class Random : public pagerClass {
     frame_t* select_victim_frame(frame_t* frame_table) override;
 };
 
+class Clock : public pagerClass {
+    public:
+    Clock(int n_f) : pagerClass("Clock", n_f) {}
+    int hand;
+    frame_t* select_victim_frame(frame_t* frame_table) override;
+};
+
 #endif // MMU_H
