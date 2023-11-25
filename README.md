@@ -22,13 +22,13 @@ The input to your program will be comprised of:
 
 	- Specification for each said VMA, comprised of 4 numbers:
 
-	- Starting virtual page
+        - Starting virtual page
 
-	- Ending virtual page
+        - Ending virtual page
 
-	- Write-protected (0/1)
+        - Write-protected (0/1)
 
-	- File-mapped (0/1)
+        - File-mapped (0/1)
 
   
 
