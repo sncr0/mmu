@@ -102,6 +102,8 @@ typedef struct {
     int mapped_vpage;
     int mapped_vma_id;
     int id;
+    unsigned long age;
+    unsigned long last_used;
 } frame_t;
 
 typedef struct name {
@@ -120,6 +122,7 @@ public:
     int num_frames;
     virtual frame_t* select_victim_frame(frame_t* frame_table) = 0; // virtual base class
     virtual void update_instr_count() {};
+    virtual void reset_age(frame_t* frame) {};
 };
 
 class FIFO : public pagerClass {
@@ -158,11 +161,13 @@ class Aging : public pagerClass {
     Aging(int n_f) : pagerClass("Aging", n_f) {}
     int hand;
     frame_t* select_victim_frame(frame_t* frame_table) override;
+    void reset_age(frame_t* frame) override;
 };
 
 class WorkingSet : public pagerClass {
     public:
-    WorkingSet(int n_f) : pagerClass("WorkingSet", n_f) {}
+    global_stats &gstats;
+    WorkingSet(int n_f, global_stats& _gstats) : pagerClass("WorkingSet", n_f), gstats(_gstats) {}
     int hand;
     frame_t* select_victim_frame(frame_t* frame_table) override;
 };

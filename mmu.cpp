@@ -107,11 +107,112 @@ void NRU::update_instr_count() {
 }
 
 frame_t* Aging::select_victim_frame(frame_t* frame_table) {
-    return nullptr;
+    a_output("ASELECT %d-%d | ", hand, ((hand+num_frames-1)%num_frames));
+    frame_t* frame = nullptr;
+    frame_t* victim = nullptr;
+    unsigned long lowest_age = 0xFFFFFFFF;
+
+    for (int i = 0; i < num_frames; i++) {
+        frame = &frame_table[(hand + i) % num_frames];
+        // frame->vpage->REFERENCED? frame->age | 0x80000000 : frame->age;
+
+        frame->age = (frame->age >> 1);
+        frame->age = frame->mapped_pte->REFERENCED? (frame->age | 0x80000000) : frame->age;
+        //frame->age = (frame->age | 0x80000000);
+        a_output("%d:%lx ", frame->id, frame->age);
+        if (frame->age < lowest_age) {
+            lowest_age = frame->age;
+            victim = frame;
+        }
+        frame->mapped_pte->REFERENCED = 0;
+    }
+    a_output("| %d\n", victim->id);
+    hand = (victim->id+1) % num_frames;
+    return victim;
+}
+
+void Aging::reset_age(frame_t* frame) {
+    frame->age = 0;
 }
 
 frame_t* WorkingSet::select_victim_frame(frame_t* frame_table) {
-    return nullptr;
+    int orig_hand = hand;
+
+    frame_t* ref_backup = nullptr;
+    frame_t* nref_backup = nullptr;
+    frame_t* future_victim = nullptr;
+    frame_t* victim = nullptr;
+    bool found_victim = false;
+    unsigned long ref_oldest_time_last_used = 0xFFFFFFFF;
+    unsigned long nref_oldest_time_last_used = 0xFFFFFFFF;
+    unsigned long current_time = gstats.inst_count + gstats.ctx_switches + gstats.process_exits -1;
+    // a_output("current time: %lu\n", gstats.inst_count + gstats.ctx_switches + gstats.process_exits);
+    // a_output(" inst_count: %lu\n", gstats.inst_count);
+    // a_output(" ctx_switches: %lu\n", gstats.ctx_switches);
+    // a_output(" process_exits: %lu\n", gstats.process_exits);
+    a_output("ASELECT %d-%d | ", hand, ((hand+num_frames-1)%num_frames));
+
+    while (found_victim == false) {
+        frame_t* frame = &frame_table[hand];
+        a_output("%d(%d %d:%d %lu) ", frame->id, 
+                                        frame->mapped_pte->REFERENCED, 
+                                        frame->mapped_process->process_id,
+                                        frame->mapped_vpage,
+                                        frame->last_used);
+        // Keep backup victim if nothing found
+        // if (frame->last_used < oldest_time_last_used) {
+        //     victim = frame;
+        //     nref_oldest_time_last_used = frame->last_used;
+        // }
+
+
+        if (frame->mapped_pte->REFERENCED) {
+
+            if (frame->last_used < ref_oldest_time_last_used) {
+                ref_backup = frame;
+                ref_oldest_time_last_used = frame->last_used;
+            }
+            frame->last_used = current_time;
+            frame->mapped_pte->REFERENCED = 0;
+        }
+        else {
+            if (gstats.inst_count + gstats.ctx_switches + gstats.process_exits - frame->last_used > 50) {
+                if (victim == nullptr) {
+                    victim = frame;
+                    a_output("STOP(%d) ", (hand - orig_hand + 1 + num_frames) % num_frames);
+                    break;
+                }
+                //future_victim = frame;
+                //found_victim = true;
+            }
+            else {
+                if (frame->last_used < nref_oldest_time_last_used) {
+                    nref_backup = frame;
+                    nref_oldest_time_last_used = frame->last_used;
+                }
+            }
+        }
+        hand = (hand + 1) % num_frames;
+
+        // Check if wrapped around
+        if (orig_hand == hand) {
+
+            break;
+        }
+    }
+
+    if (victim == nullptr) {
+        if (nref_backup != nullptr) {
+            victim = nref_backup;
+        }
+        else {
+            victim = ref_backup;
+        }
+    }
+
+    a_output("| %d\n", victim->id);
+    hand = (victim->id+1) % num_frames;
+    return victim;
 }
 
 // ====================|  Diagnostic Functions  |===========================
@@ -279,6 +380,8 @@ void populate_frame_table(int num_frames, std::deque<int> &free_list, frame_t* f
         frame_table[i].mapped_pte = nullptr;
         frame_table[i].mapped_process = nullptr;
         frame_table[i].mapped_vpage = 0;
+        frame_table[i].mapped_vma_id = 0;
+        frame_table[i].age = 0;
     }
 }
 
@@ -396,6 +499,9 @@ bool pagefault_handler(process_object* process,
     }
 
     output(" MAP %d\n", allocated_frame->id);
+    pager->reset_age(allocated_frame);
+    allocated_frame->last_used = gstats.inst_count + gstats.ctx_switches + gstats.process_exits -1;
+
     process->pstats.maps++;
 
     return true;
@@ -406,7 +512,7 @@ bool pagefault_handler(process_object* process,
 
 
 // Simulation
-void simulation(int num_frames, std::map<int, process_object> processes, std::ifstream& file, pagerClass* pager) {
+void simulation(int num_frames, std::map<int, process_object> processes, std::ifstream& file, pagerClass* pager, global_stats &gstats) {
     
     frame_t frame_table[num_frames];
     std::deque<int> free_list;
@@ -415,7 +521,6 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
     process_object* current_process;
     pte_t* pte;	
     int instruction_number = 0;
-    global_stats gstats = global_stats();
 
     populate_frame_table(num_frames, free_list, frame_table);
 
@@ -592,6 +697,9 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    global_stats gstats = global_stats();
+
+
     pagerClass* pager = nullptr;
     if (algo == 'f') {
         pager = new FIFO(num_frames);
@@ -610,7 +718,8 @@ int main(int argc, char **argv) {
         pager = new Aging(num_frames);
     }
     else if (algo == 'w') {
-        pager = new WorkingSet(num_frames);
+
+        pager = new WorkingSet(num_frames, gstats);
     }
     else {
         std::cout << "Invalid algorithm" << std::endl;
@@ -622,6 +731,5 @@ int main(int argc, char **argv) {
 
 
     std::map<int, process_object> processes = readInput(file);
-    //printProcesses(processes);
-    simulation(num_frames, processes, file, pager);
+    simulation(num_frames, processes, file, pager, gstats);
 }
