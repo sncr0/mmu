@@ -32,6 +32,87 @@ frame_t* Clock::select_victim_frame(frame_t* frame_table) {
     return victim;
 }
 
+frame_t* NRU::select_victim_frame(frame_t* frame_table) {
+    frame_t* victim = nullptr;
+    int class_of_victim = 0;
+    std::array<frame_t*, 4> frames_classes = {nullptr, nullptr, nullptr, nullptr};
+    bool do_reset_bits = false;
+    int lowest_class = 0;
+
+    if (time_since_reset >= 48) {
+        for (int i = 0; i < num_frames; i++) {
+            do_reset_bits = true;
+        }
+        time_since_reset = 0;
+    }
+
+
+    int traversed = 0;
+
+    for (int i = 0; i < num_frames; i++) {
+        frame_t* frame = &frame_table[(i + hand) % num_frames];
+        traversed++;
+        if (frame->mapped_pte->REFERENCED == 0 && frame->mapped_pte->MODIFIED == 0) {
+            if (frames_classes[0] == nullptr) {
+                frames_classes[0] = frame;
+            }
+            if (!do_reset_bits) {
+                break;
+                // frame->mapped_pte->MODIFIED = 0;
+            }
+        }
+        else if (frame->mapped_pte->REFERENCED == 0 && frame->mapped_pte->MODIFIED == 1) {
+            if (do_reset_bits) {
+                frame->mapped_pte->REFERENCED = 0;
+                // frame->mapped_pte->MODIFIED = 0;
+            }
+            if (frames_classes[1] == nullptr) {
+                frames_classes[1] = frame;
+            }
+        }
+        else if (frame->mapped_pte->REFERENCED == 1 && frame->mapped_pte->MODIFIED == 0) {
+            if (do_reset_bits) {
+                frame->mapped_pte->REFERENCED = 0;
+                // frame->mapped_pte->MODIFIED = 0;
+            }
+            if (frames_classes[2] == nullptr) {
+                frames_classes[2] = frame;
+            }
+        }
+        else if (frame->mapped_pte->REFERENCED == 1 && frame->mapped_pte->MODIFIED == 1) {
+            if (do_reset_bits) {
+                frame->mapped_pte->REFERENCED = 0;
+                // frame->mapped_pte->MODIFIED = 0;
+            }
+            if (frames_classes[3] == nullptr) {
+                frames_classes[3] = frame;
+            }
+        }
+    }
+    for (int k = 0; k < 4; k++) {
+        if (frames_classes[k] != nullptr) {
+            victim = frames_classes[k];
+            lowest_class = k;
+            break;
+        }
+    }
+    a_output("ASELECT: hand=%2d %d | %d %d %d\n", hand, do_reset_bits, lowest_class, victim->id, traversed);
+    hand = (victim->id + 1) % num_frames;
+
+    return victim;
+}
+
+void NRU::update_instr_count() {
+    time_since_reset++;
+}
+
+frame_t* Aging::select_victim_frame(frame_t* frame_table) {
+    return nullptr;
+}
+
+frame_t* WorkingSet::select_victim_frame(frame_t* frame_table) {
+    return nullptr;
+}
 
 // ====================|  Diagnostic Functions  |===========================
 
@@ -340,6 +421,7 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
 
 
     while (get_next_instruction(&operation, &vpage, file)) {
+        pager->update_instr_count();
         output("%d: ==> %c %d\n", instruction_number, operation, vpage);
         if (operation == 'c') {
             current_process = &processes[vpage];
@@ -418,6 +500,9 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
                     printPageTable(&process);
                 }
             }
+            if (f_flag) {
+                printFrameTable(frame_table, num_frames);
+            }
         }
         else {
             std::cout << "Invalid operation" << std::endl;
@@ -482,6 +567,7 @@ int main(int argc, char **argv) {
                                 x_flag = false;
                                 break;
                             case 'f':
+                                f_flag = true;
                                 do_verbose = true;
                             case 'a':
                                 a_flag = true;
@@ -517,6 +603,15 @@ int main(int argc, char **argv) {
     else if (algo == 'c') {
         pager = new Clock(num_frames);
     }
+    else if (algo == 'e') {
+        pager = new NRU(num_frames);
+    }
+    else if (algo == 'a') {
+        pager = new Aging(num_frames);
+    }
+    else if (algo == 'w') {
+        pager = new WorkingSet(num_frames);
+    }
     else {
         std::cout << "Invalid algorithm" << std::endl;
         exit(1);
@@ -527,6 +622,6 @@ int main(int argc, char **argv) {
 
 
     std::map<int, process_object> processes = readInput(file);
-    printProcesses(processes);
+    //printProcesses(processes);
     simulation(num_frames, processes, file, pager);
 }

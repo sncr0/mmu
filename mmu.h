@@ -119,6 +119,7 @@ public:
     int hand;
     int num_frames;
     virtual frame_t* select_victim_frame(frame_t* frame_table) = 0; // virtual base class
+    virtual void update_instr_count() {};
 };
 
 class FIFO : public pagerClass {
@@ -139,6 +140,29 @@ class Random : public pagerClass {
 class Clock : public pagerClass {
     public:
     Clock(int n_f) : pagerClass("Clock", n_f) {}
+    int hand;
+    frame_t* select_victim_frame(frame_t* frame_table) override;
+};
+
+class NRU : public pagerClass {
+    public:
+    int time_since_reset;
+    NRU(int n_f) : pagerClass("NRU", n_f), time_since_reset(0){}
+    int hand;
+    frame_t* select_victim_frame(frame_t* frame_table) override;
+    void update_instr_count() override;
+};
+
+class Aging : public pagerClass {
+    public:
+    Aging(int n_f) : pagerClass("Aging", n_f) {}
+    int hand;
+    frame_t* select_victim_frame(frame_t* frame_table) override;
+};
+
+class WorkingSet : public pagerClass {
+    public:
+    WorkingSet(int n_f) : pagerClass("WorkingSet", n_f) {}
     int hand;
     frame_t* select_victim_frame(frame_t* frame_table) override;
 };
