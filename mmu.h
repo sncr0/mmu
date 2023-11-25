@@ -17,7 +17,7 @@
 bool do_show_output = false;
 bool do_show_pagetable = false;
 bool do_show_frametable = false;
-bool do_show_per_proc_stats = false;
+bool do_show_stats = false;
 bool do_verbose = false;
 
 bool x_flag = false;
@@ -64,12 +64,33 @@ struct VMA {
     VMA() {}
 };
 
+struct global_stats{
+    unsigned long inst_count;
+    unsigned long ctx_switches;
+    unsigned long process_exits;
+    global_stats() : inst_count(0), ctx_switches(0), process_exits(0) {}
+};
+
+struct process_stats{
+    unsigned long unmaps;
+    unsigned long maps;
+    unsigned long ins;
+    unsigned long outs;
+    unsigned long fins;
+    unsigned long fouts;
+    unsigned long zeros;
+    unsigned long segv;
+    unsigned long segprot;
+    process_stats() : unmaps(0), maps(0), ins(0), outs(0), fins(0), fouts(0), zeros(0), segv(0), segprot(0) {}
+};
+
 struct process_object{
     pte_t page_table[MAX_VPAGES]= {0,0,0,0,0,0};
     int process_id;
     int number_of_VMA;
     std::vector<VMA> VMA_list;
-    process_object(std::vector<VMA> VMA_list_input) : VMA_list(VMA_list_input) {}
+    process_stats pstats;
+    process_object(std::vector<VMA> VMA_list_input) : VMA_list(VMA_list_input), pstats(process_stats()) {}
     process_object() {}
     };
 

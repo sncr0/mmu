@@ -1,5 +1,7 @@
 #include "mmu.h"
 
+
+// ===========================|  Pager  |==================================
 frame_t* FIFO::select_victim_frame(frame_t* frame_table) {
     frame_t* victim = &frame_table[hand];
     hand = (hand + 1) % num_frames;
@@ -7,10 +9,55 @@ frame_t* FIFO::select_victim_frame(frame_t* frame_table) {
     return victim;
 }
 
-void print_page_table(process_object* current_process) {
-    
-    std::cout << "PT[" << current_process->process_id << "]: ";
+// ====================|  Diagnostic Functions  |===========================
+void printProcessStatistics(process_object* current_process) {
+    printf("PROC[%d]: U=%lu M=%lu I=%lu O=%lu FI=%lu FO=%lu Z=%lu SV=%lu SP=%lu\n",
+            current_process->process_id,
+            current_process->pstats.unmaps, 
+            current_process->pstats.maps, 
+            current_process->pstats.ins, 
+            current_process->pstats.outs,
+            current_process->pstats.fins, 
+            current_process->pstats.fouts, 
+            current_process->pstats.zeros,
+            current_process->pstats.segv, 
+            current_process->pstats.segprot);
+}
+
+void printGlobalStatistics(std::map<int, process_object> processes, global_stats &gstats) {
+    unsigned long long cost = 0;
+
+
+    cost += (unsigned long long)gstats.inst_count;
+    cost += (unsigned long long)gstats.ctx_switches * 130;
+    cost += (unsigned long long)gstats.process_exits * 1230;
+    for (auto& [id, process] : processes) {
+        /* read/write (load/store) instructions count as 1, context_switches instructions=130, process exits instructions=1230.
+        In addition if the following operations counts as follows:
+        maps=350, unmaps=410, ins=3200, outs=2750, fins=2350, fouts=2800, zeros=150, segv=440, segprot=410 */
+        cost += (unsigned long long)process.pstats.maps * 350;
+        cost += (unsigned long long)process.pstats.unmaps * 410;
+        cost += (unsigned long long)process.pstats.ins * 3200;
+        cost += (unsigned long long)process.pstats.outs * 2750;
+        cost += (unsigned long long)process.pstats.fins * 2350;
+        cost += (unsigned long long)process.pstats.fouts * 2800;
+        cost += (unsigned long long)process.pstats.zeros * 150;
+        cost += (unsigned long long)process.pstats.segv * 440;
+        cost += (unsigned long long)process.pstats.segprot * 410;
+    }
+
+    printf("TOTALCOST %lu %lu %lu %llu %lu\n", 
+            gstats.inst_count + gstats.ctx_switches + gstats.process_exits, 
+            gstats.ctx_switches, 
+            gstats.process_exits, 
+            cost, 
+            sizeof(pte_t));
+}
+
+void printPageTable(process_object* current_process) {
+    printf("PT[%d]:", current_process->process_id);
     for (int i = 0; i < MAX_VPAGES; ++i) {
+        printf(" ");
         /*
         PT[0]: 0:RMS 1:RMS 2:RMS 3:R-S 4:R-S 5:RMS 6:R-S 7:R-S 8:RMS 9:R-S 10:RMS 
         11:R-S 12:R-- 13:RM- # # 16:R-- 17:R-S # # 20:R-- # 22:R-S 23:RM- 24:RMS # # 
@@ -27,23 +74,52 @@ void print_page_table(process_object* current_process) {
         const pte_t& page_table_entry = current_process->page_table[i];
         if (!page_table_entry.PRESENT) {
             if (page_table_entry.PAGEDOUT) {
-                std::cout << "# ";
+                printf("#");
             }
             else {
-                std::cout << "* ";
+                printf("*");
             }
         }
         else {
-            std::cout << i << ":";
-            std::cout << (page_table_entry.REFERENCED ? "R" : "-");
-            std::cout << (page_table_entry.MODIFIED ? "M" : "-");
-            std::cout << (page_table_entry.PAGEDOUT ? "S" : "-");
-            std::cout << " ";
+            printf("%d:", i);
+            printf("%c", page_table_entry.REFERENCED ? 'R' : '-');
+            printf("%c", page_table_entry.MODIFIED ? 'M' : '-');
+            printf("%c", page_table_entry.PAGEDOUT ? 'S' : '-');
         }
     }
-    std::cout << "\n";
+    printf("\n");
 }
 
+void printFrameTable(frame_t* frame_table, int num_frames) {
+    printf("FT:");
+    for (int i = 0; i < num_frames; ++i) {
+        printf(" ");
+        const frame_t& frame = frame_table[i];
+        if (frame.mapped_pte == nullptr) {
+            printf("*");
+        }
+        else {
+            printf("%d:%d", frame.mapped_process->process_id, frame.mapped_vpage);
+        }
+    }
+    printf("\n");
+}
+
+
+
+void printProcesses(std::map<int, process_object> processes) {
+    for (const auto& [id, process] : processes) {
+        verbose("Process %d VMA:\n", id);
+        for (auto it = process.VMA_list.begin(); it != process.VMA_list.end(); ++it) {
+            const auto& [start_vpage, end_vpage, write_protected, id, file_mapped] = *it;
+            int index = std::distance(process.VMA_list.begin(), it);
+            verbose("  VMA %d: %d %d %d %d\n", index, start_vpage, end_vpage, write_protected, file_mapped);
+        }
+    }
+}
+
+
+// ====================|  Input Parsing  |===========================
 std::string readLine(std::ifstream& file) {
     std::string line;
     while (getline(file, line)){
@@ -61,7 +137,6 @@ std::map<int, process_object> readInput(std::ifstream& file){
     std::map<int, process_object> processes;
     int num_processes = 0;
     
-    // Read the number of processes
     num_processes = std::stoi(readLine(file));
 
     // Check for vma per process in array of processes
@@ -76,13 +151,22 @@ std::map<int, process_object> readInput(std::ifstream& file){
             int start_vpage, end_vpage, write_protected;
             bool file_mapped;
             iss >> start_vpage >> end_vpage >> write_protected >> file_mapped;
-            //vma_list.push_back(VMA(start_vpage, end_vpage, write_protected, file_mapped));
             vma_list.push_back(VMA(start_vpage, end_vpage, write_protected, j, file_mapped));
         }
         processes[i] = process_object(vma_list);
         processes[i].process_id = i;
     }
     return processes;
+}
+
+void populate_frame_table(int num_frames, std::deque<int> &free_list, frame_t* frame_table) {
+    for (int i = 0; i < num_frames; i++) {
+        free_list.push_back(i);
+        frame_table[i].id = i;
+        frame_table[i].mapped_pte = nullptr;
+        frame_table[i].mapped_process = nullptr;
+        frame_table[i].mapped_vpage = 0;
+    }
 }
 
 bool get_next_instruction(char* operation, int* vpage, std::ifstream& file) {
@@ -98,17 +182,7 @@ bool get_next_instruction(char* operation, int* vpage, std::ifstream& file) {
     }
 }
 
-void printProcesses(std::map<int, process_object> processes) {
-    for (const auto& [id, process] : processes) {
-        verbose("Process %d VMA:\n", id);
-        for (auto it = process.VMA_list.begin(); it != process.VMA_list.end(); ++it) {
-            const auto& [start_vpage, end_vpage, write_protected, id, file_mapped] = *it;
-            int index = std::distance(process.VMA_list.begin(), it);
-            verbose("  VMA %d: %d %d %d %d\n", index, start_vpage, end_vpage, write_protected, file_mapped);
-        }
-    }
-}
-
+// ====================|  Simulation  |===========================
 frame_t* allocate_frame_from_free_list(std::deque<int> &free_list, frame_t* frame_table) {
     // allocate a frame from the free list
     // if no free frame is available, return NULL
@@ -123,8 +197,6 @@ frame_t* allocate_frame_from_free_list(std::deque<int> &free_list, frame_t* fram
         return frame_pointer;
     }
 }
-
-class pager;
 
 frame_t* get_frame(pagerClass* pager, std::deque<int> &free_list, frame_t* frame_table) {
     // TODO
@@ -144,15 +216,21 @@ frame_t* get_frame(pagerClass* pager, std::deque<int> &free_list, frame_t* frame
     if (frame->mapped_pte != nullptr){
         pte_t* old_pte = frame->mapped_pte;
         output(" UNMAP %d:%d\n", frame->mapped_process->process_id, frame->mapped_vpage);
+        frame->mapped_process->pstats.unmaps++;
         
         if (old_pte->MODIFIED){
             if (frame->mapped_process->VMA_list[frame->mapped_vma_id].file_mapped) {
                 output(" FOUT\n");
-                old_pte->PAGEDOUT = 1;
+                frame->mapped_process->pstats.fouts++;
+                old_pte->PAGEDOUT = 0;
+                old_pte->MODIFIED = 0;
             }
             else {
                 output(" OUT\n");
+                frame->mapped_process->pstats.outs++;
                 old_pte->PAGEDOUT = 1;
+                old_pte->MODIFIED = 0;
+
             }
         } 
     
@@ -170,7 +248,8 @@ bool pagefault_handler(process_object* process,
                         int vpage, 
                         pagerClass *pager, 
                         std::deque<int> &free_list,
-                        frame_t* frame_table){
+                        frame_t* frame_table,
+                        global_stats &gstats){
 
     /* OS must resolve:
         • select a victim frame to replace
@@ -198,8 +277,9 @@ bool pagefault_handler(process_object* process,
         }
     }
     if (vma_of_vpage == nullptr) {
-        std::cout << "SEGV" << std::endl;
-        exit(1);
+        process->pstats.segv++;
+        printf(" SEGV\n");
+        return false;
     }
 
     /*
@@ -209,6 +289,7 @@ bool pagefault_handler(process_object* process,
 
     frame_t* allocated_frame = get_frame(pager, free_list, frame_table);
     process->page_table[vpage].PHYSICAL_FRAME_NUMBER = allocated_frame->id;
+    process->page_table[vpage].WRITE_PROTECT = vma_of_vpage->write_protected;
     process->page_table[vpage].PRESENT = 1;
     allocated_frame->mapped_pte = &(process->page_table[vpage]);
     allocated_frame->mapped_process = process;
@@ -223,25 +304,42 @@ bool pagefault_handler(process_object* process,
     the page must be brought back from the swap space (“IN”) or (“FIN” in case it is a memory mapped file). If the vpage was
     never swapped out and is not file mapped, then by definition it still has a zero filled content and you issue the “ZERO” output.
     */
-
-    if (process->page_table[vpage].PAGEDOUT) {
-        // bring back from swap space
-        if (vma_of_vpage->file_mapped == true) {
-            output(" FIN\n");
-            //process->page_table[vpage].PAGEDOUT = 0;
-        }
-        else {
-            output(" IN\n");
-            //process->page_table[vpage].PAGEDOUT = 0;
-        }
+    if (vma_of_vpage->file_mapped == true) {
+        output(" FIN\n");
+        process->pstats.fins++;
+        //process->page_table[vpage].PAGEDOUT = 0;
+    }
+    else if (process->page_table[vpage].PAGEDOUT) {
+        output(" IN\n");
+        process->pstats.ins++;
+        //process->page_table[vpage].PAGEDOUT = 0;
     }
     else {
-        // zero filled content
         output(" ZERO\n");
+        process->pstats.zeros++;
     }
+    // if (process->page_table[vpage].PAGEDOUT) {
+    //     // bring back from swap space
+    //     if (vma_of_vpage->file_mapped == true) {
+    //         output(" FIN\n");
+    //         process->pstats.fins++;
+    //         //process->page_table[vpage].PAGEDOUT = 0;
+    //     }
+    //     else {
+    //         output(" IN\n");
+    //         process->pstats.ins++;
+    //         //process->page_table[vpage].PAGEDOUT = 0;
+    //     }
+    // }
+    // else {
+    //     // zero filled content
+    //     output(" ZERO\n");
+    //     process->pstats.zeros++;
+    // }
 
 
     output(" MAP %d\n", allocated_frame->id);
+    process->pstats.maps++;
 
     
     return true;
@@ -250,16 +348,6 @@ bool pagefault_handler(process_object* process,
 
 
 };
-
-void populate_frame_table(int num_frames, std::deque<int> &free_list, frame_t* frame_table) {
-    for (int i = 0; i < num_frames; i++) {
-        free_list.push_back(i);
-        frame_table[i].id = i;
-        frame_table[i].mapped_pte = nullptr;
-        frame_table[i].mapped_process = nullptr;
-        frame_table[i].mapped_vpage = 0;
-    }
-}
 
 void simulation(int num_frames, std::map<int, process_object> processes, std::ifstream& file, pagerClass* pager) {
     
@@ -270,6 +358,7 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
     process_object* current_process;
     pte_t* pte;	
     int instruction_number = 0;
+    global_stats gstats = global_stats();
 
     populate_frame_table(num_frames, free_list, frame_table);
 
@@ -278,16 +367,65 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
         output("%d: ==> %c %d\n", instruction_number, operation, vpage);
         if (operation == 'c') {
             current_process = &processes[vpage];
+            gstats.ctx_switches++;
         }
         else if (operation == 'e') {
-            // TODO
+            /*
+            On process exit (instruction), you have to traverse the active process’s page table starting from 0..63 and for each valid entry 
+            UNMAP the page and FOUT modified filemapped pages. Note that dirty non-fmapped (anonymous) pages are not written
+            back (OUT) as the process exits. The used frame has to be returned to the free pool and made available to the get_frame()
+            function again. The frames then should be used again in the order they were released.
+            */ //frame->mapped_pte = nullptr;
+            printf("EXIT current process %d\n", current_process->process_id);
+            gstats.process_exits++;
+            for (int i = 0; i < MAX_VPAGES; i++) {
+                if (current_process->page_table[i].PRESENT) {
+                    output(" UNMAP %d:%d\n", current_process->process_id, i);
+                    current_process->pstats.unmaps++;
+                    for (auto& frame_table_entry : frame_table) {
+                        if (frame_table_entry.mapped_process == current_process && frame_table_entry.mapped_vpage == i) {
+                            frame_table_entry.mapped_pte = nullptr;
+                            break;
+                        }
+                    }
+                    if (current_process->page_table[i].MODIFIED) {
+                        bool vpage_in_vma = false;
+                        VMA* vma_of_vpage = nullptr;
+                        for (auto it = current_process->VMA_list.begin(); it != current_process->VMA_list.end(); ++it) {
+                            if (i >= it->start_vpage && i <= it->end_vpage) {
+                                vma_of_vpage = &(*it);
+                                vpage_in_vma = true;
+                                break;
+                            }
+                        }
+                        if (vma_of_vpage->file_mapped == true) {
+                            output(" FOUT\n");
+                            current_process->pstats.fouts++;
+                        }
+                    }
+                    free_list.push_back(current_process->page_table[i].PHYSICAL_FRAME_NUMBER);
+                }
+                current_process->page_table[i].PRESENT = 0;
+                current_process->page_table[i].REFERENCED = 0;
+                current_process->page_table[i].MODIFIED = 0;
+                current_process->page_table[i].WRITE_PROTECT = 0;
+                current_process->page_table[i].PAGEDOUT = 0;
+                current_process->page_table[i].PHYSICAL_FRAME_NUMBER = 0;
+            }
+            
         }
         else if (operation == 'r' || operation == 'w') {
+            gstats.inst_count++;
             pte = &current_process->page_table[vpage];
             if (!pte->PRESENT) {
-                if (!pagefault_handler(current_process, vpage, pager, free_list, frame_table)){
-                    std::cout << "SEGV" << std::endl;
-                    exit(1);
+                if (!pagefault_handler(current_process, vpage, pager, free_list, frame_table, gstats)){
+
+                    //std::cout << "SEGV" << std::endl;
+                    //current_process->pstats.segv++;
+                    //exit(1);
+                    //gstats.inst_count++;
+                    instruction_number++;
+                    continue;
                 }
             }
 
@@ -296,19 +434,30 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
             }
 
             if (operation == 'w') {
-                current_process->page_table[vpage].REFERENCED = 1;
-                current_process->page_table[vpage].MODIFIED = 1;
+                if (current_process->page_table[vpage].WRITE_PROTECT == 1) {
+                    std::cout << " SEGPROT" << std::endl;
+                    current_process->pstats.segprot++;
+                    current_process->page_table[vpage].REFERENCED = 1;
+                }
+                else {
+                    current_process->page_table[vpage].REFERENCED = 1;
+                    current_process->page_table[vpage].MODIFIED = 1;
+                }
             }
 
             if (x_flag) {
-                print_page_table(current_process);
+                printPageTable(current_process);
+            }
+            if (y_flag) {
+                for (auto& [id, process] : processes) {
+                    printPageTable(&process);
+                }
             }
         }
         else {
             std::cout << "Invalid operation" << std::endl;
             exit(1);
         }
-
         // handle special case of “c” and “e” instruction
         // now the real instructions for read and write
         //if ( ! pte->present) {
@@ -323,9 +472,23 @@ void simulation(int num_frames, std::map<int, process_object> processes, std::if
         // check write protection
         // simulate instruction execution by hardware by updating the R/M PTE bits
         //update_pte(read/modify) bits based on operations.
-    instruction_number++;
+    
+        instruction_number++;
     }
-
+    if (do_show_pagetable) {
+        for (auto& [id, process] : processes) {
+            printPageTable(&process);
+        }
+    }
+    if (do_show_frametable) {
+        printFrameTable(frame_table, num_frames);
+    }
+    if (do_show_stats) {
+        for (auto& [id, process] : processes) {
+            printProcessStatistics(&process);
+        }
+        printGlobalStatistics(processes, gstats);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -365,13 +528,14 @@ int main(int argc, char **argv) {
                                 do_show_frametable = true;
                                 break;
                             case 'S':
-                                do_show_per_proc_stats = true;
+                                do_show_stats = true;
                                 break;
                             case 'x':
                                 x_flag = true;
                                 break;
                             case 'y':  
                                 y_flag = true;
+                                x_flag = false;
                                 break;
                             case 'f':
                                 do_verbose = true;
@@ -413,7 +577,7 @@ int main(int argc, char **argv) {
 
 
 
-   std::map<int, process_object> processes = readInput(file);
+    std::map<int, process_object> processes = readInput(file);
     printProcesses(processes);
     simulation(num_frames, processes, file, pager);
 }
