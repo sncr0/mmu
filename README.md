@@ -3,7 +3,7 @@ Virtual Memory Management Simulation
 
   
 
-This project is an implementation of a virtual memory management simulation for the Operating Systems course (CSCI-GA.2250-001, Fall 2023) at NYU. The simulation involves handling virtual memory addresses, page tables, and page replacement algorithms.
+This project is an implementation of a virtual memory management simulation. The simulation involves handling virtual memory addresses, page tables, and page replacement algorithms.
  
 
 # Input Specification
